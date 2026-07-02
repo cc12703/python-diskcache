@@ -311,6 +311,19 @@ keys will be serialized which is likely to have a meaningless sorted order.
     >>> cache.peekitem(last=False)
     ('c', None)
 
+To iterate only keys that start with a given prefix, pass ``prefix`` (str or
+bytes). The filter is pushed into the database range query so it stays cheap
+on large caches.
+
+    >>> cache.clear() > 0
+    True
+    >>> for key in (b'user:1', b'user:2', b'post:1'):
+    ...     cache[key] = 1
+    >>> list(cache.iterkeys(prefix=b'user:'))
+    [b'user:1', b'user:2']
+    >>> list(cache.iterkeys(prefix=b'user:', reverse=True))
+    [b'user:2', b'user:1']
+
 If only the first or last item in insertion order is desired then
 :meth:`peekitem <.Cache.peekitem>` is more efficient than using iteration.
 

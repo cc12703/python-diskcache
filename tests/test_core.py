@@ -1034,6 +1034,56 @@ def test_iterkeys(cache):
     assert list(cache.iterkeys()) == []
 
 
+def test_iterkeys_prefix(cache):
+    bytes_keys = [b'a-1', b'a-2', b'a-3', b'b-1', b'c']
+    for key in bytes_keys:
+        cache[key] = 1
+
+    assert sorted(cache.iterkeys(prefix=b'a')) == [b'a-1', b'a-2', b'a-3']
+    assert list(cache.iterkeys(prefix=b'a', reverse=True)) == [
+        b'a-3',
+        b'a-2',
+        b'a-1',
+    ]
+    assert list(cache.iterkeys(prefix=b'c')) == [b'c']
+    assert list(cache.iterkeys(prefix=b'z')) == []
+    assert list(cache.iterkeys(prefix=b'')) == sorted(bytes_keys)
+    assert list(cache.iterkeys(prefix=b'\xff')) == []
+
+
+def test_iterkeys_prefix_str(cache):
+    for key in ('apple', 'apricot', 'banana'):
+        cache[key] = 1
+
+    assert sorted(cache.iterkeys(prefix='ap')) == ['apple', 'apricot']
+    assert list(cache.iterkeys(prefix='ap', reverse=True)) == [
+        'apricot',
+        'apple',
+    ]
+
+
+def test_iterkeys_prefix_excludes_other_types(cache):
+    cache[b'a-1'] = 1
+    cache['a-2'] = 2
+    cache[0] = 3
+
+    assert list(cache.iterkeys(prefix=b'a')) == [b'a-1']
+    assert list(cache.iterkeys(prefix='a')) == ['a-2']
+
+
+def test_iterkeys_prefix_full_key_match(cache):
+    cache[b'abc'] = 1
+    cache[b'abd'] = 2
+    assert list(cache.iterkeys(prefix=b'abc')) == [b'abc']
+
+
+def test_iterkeys_prefix_edge_bounds(cache):
+    cache['x'] = 1
+    assert list(cache.iterkeys(prefix=chr(0x10FFFF))) == []
+    with pytest.raises(TypeError):
+        list(cache.iterkeys(prefix=123))
+
+
 def test_pickle(cache):
     for num, val in enumerate('abcde'):
         cache[val] = num

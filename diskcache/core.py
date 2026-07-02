@@ -100,6 +100,38 @@ EVICTION_POLICY = {
 }
 
 
+def _prefix_bounds(prefix):
+    """Return ``(lower, upper_or_None)`` byte/char range for prefix filtering.
+
+    ``lower`` is always ``prefix`` itself. ``upper`` is the smallest successor
+    string/bytes such that all keys starting with ``prefix`` fall in
+    ``[lower, upper)``. Returns ``None`` for ``upper`` when ``prefix`` has no
+    finite successor (trailing ``0xFF`` bytes or ``0x10FFFF`` code points),
+    in which case callers omit the upper-bound clause.
+
+    """
+    if isinstance(prefix, str):
+        idx = len(prefix) - 1
+        while idx >= 0 and ord(prefix[idx]) == 0x10FFFF:
+            idx -= 1
+        if idx < 0:
+            return prefix, None
+        upper = prefix[:idx] + chr(ord(prefix[idx]) + 1)
+    elif isinstance(prefix, (bytes, bytearray)):
+        seq = bytes(prefix)
+        idx = len(seq) - 1
+        while idx >= 0 and seq[idx] == 0xFF:
+            idx -= 1
+        if idx < 0:
+            return seq, None
+        upper = seq[:idx] + bytes([seq[idx] + 1])
+    else:
+        raise TypeError(
+            'prefix must be str or bytes, not %s' % type(prefix).__name__
+        )
+    return prefix, upper
+
+
 class Disk:
     """Cache key and value serialization for SQLite database and files."""
 
@@ -2205,7 +2237,7 @@ class Cache:
 
         return count
 
-    def iterkeys(self, reverse=False):
+    def iterkeys(self, reverse=False, *, prefix=None):
         """Iterate Cache keys in database sort order.
 
         >>> cache = Cache()
@@ -2215,8 +2247,19 @@ class Cache:
         [0, 1, 2, 3, 4]
         >>> list(cache.iterkeys(reverse=True))
         [4, 3, 2, 1, 0]
+        >>> cache.clear() > 0
+        True
+        >>> for key in (b'a-1', b'a-2', b'b-1'):
+        ...     cache[key] = 1
+        >>> list(cache.iterkeys(prefix=b'a'))
+        [b'a-1', b'a-2']
+        >>> list(cache.iterkeys(prefix=b'a', reverse=True))
+        [b'a-2', b'a-1']
 
         :param bool reverse: reverse sort order (default False)
+        :param prefix: when given (str or bytes), only yield keys that start
+            with this prefix. Keys of other types (int, float, pickled
+            objects) are excluded by the database range query. (default None)
         :return: iterator of Cache keys
 
         """
@@ -2224,44 +2267,87 @@ class Cache:
         limit = 100
         _disk_get = self._disk.get
 
-        if reverse:
-            select = (
-                'SELECT key, raw FROM Cache'
-                ' ORDER BY key DESC, raw DESC LIMIT 1'
-            )
-            iterate = (
-                'SELECT key, raw FROM Cache'
-                ' WHERE key = ? AND raw < ? OR key < ?'
-                ' ORDER BY key DESC, raw DESC LIMIT ?'
-            )
+        if prefix is None:
+            if reverse:
+                select = (
+                    'SELECT key, raw FROM Cache'
+                    ' ORDER BY key DESC, raw DESC LIMIT 1'
+                )
+                iterate = (
+                    'SELECT key, raw FROM Cache'
+                    ' WHERE key = ? AND raw < ? OR key < ?'
+                    ' ORDER BY key DESC, raw DESC LIMIT ?'
+                )
+            else:
+                select = (
+                    'SELECT key, raw FROM Cache'
+                    ' ORDER BY key ASC, raw ASC LIMIT 1'
+                )
+                iterate = (
+                    'SELECT key, raw FROM Cache'
+                    ' WHERE key = ? AND raw > ? OR key > ?'
+                    ' ORDER BY key ASC, raw ASC LIMIT ?'
+                )
+            init_args = ()
+            iter_tail = (limit,)
         else:
-            select = (
-                'SELECT key, raw FROM Cache'
-                ' ORDER BY key ASC, raw ASC LIMIT 1'
-            )
-            iterate = (
-                'SELECT key, raw FROM Cache'
-                ' WHERE key = ? AND raw > ? OR key > ?'
-                ' ORDER BY key ASC, raw ASC LIMIT ?'
-            )
+            lower, upper = _prefix_bounds(prefix)
+            upper_clause = '' if upper is None else ' AND key < ?'
+            if reverse:
+                select = (
+                    'SELECT key, raw FROM Cache'
+                    ' WHERE key >= ?'
+                    + upper_clause
+                    + ' ORDER BY key DESC, raw DESC LIMIT 1'
+                )
+                iterate = (
+                    'SELECT key, raw FROM Cache'
+                    ' WHERE (key = ? AND raw < ? OR key < ?) AND key >= ?'
+                    ' ORDER BY key DESC, raw DESC LIMIT ?'
+                )
+                iter_tail = (lower, limit)
+            else:
+                select = (
+                    'SELECT key, raw FROM Cache'
+                    ' WHERE key >= ?'
+                    + upper_clause
+                    + ' ORDER BY key ASC, raw ASC LIMIT 1'
+                )
+                iterate = (
+                    'SELECT key, raw FROM Cache'
+                    ' WHERE (key = ? AND raw > ? OR key > ?)'
+                    + upper_clause
+                    + ' ORDER BY key ASC, raw ASC LIMIT ?'
+                )
+                iter_tail = (limit,) if upper is None else (upper, limit)
+            init_args = (lower,) if upper is None else (lower, upper)
 
-        row = sql(select).fetchall()
+        row = sql(select, init_args).fetchall()
 
-        if row:
-            ((key, raw),) = row
-        else:
+        if not row:
             return
 
-        yield _disk_get(key, raw)
+        ((key, raw),) = row
+
+        value = _disk_get(key, raw)
+        if prefix is None or (
+            isinstance(value, (str, bytes)) and value.startswith(prefix)
+        ):
+            yield value
 
         while True:
-            rows = sql(iterate, (key, raw, key, limit)).fetchall()
+            rows = sql(iterate, (key, raw, key) + iter_tail).fetchall()
 
             if not rows:
                 break
 
             for key, raw in rows:
-                yield _disk_get(key, raw)
+                value = _disk_get(key, raw)
+                if prefix is None or (
+                    isinstance(value, (str, bytes))
+                    and value.startswith(prefix)
+                ):
+                    yield value
 
     def _iter(self, ascending=True):
         sql = self._sql
