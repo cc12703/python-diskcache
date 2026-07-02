@@ -12,7 +12,7 @@ jobs:
 
     environment:
       name: pypi
-      url: https://pypi.org/p/cc12703-python-diskcache
+      url: https://pypi.org/p/cc12703-diskcache
 
     permissions:
       id-token: write
