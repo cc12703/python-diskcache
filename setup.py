@@ -35,7 +35,7 @@ setup(
         'Tracker': 'https://github.com/cc12703/python-diskcache/issues',
     },
     license='Apache 2.0',
-    packages=['cc12703-diskcache'],
+    packages=['diskcache'],
     tests_require=['tox'],
     cmdclass={'test': Tox},
     python_requires='>=3',

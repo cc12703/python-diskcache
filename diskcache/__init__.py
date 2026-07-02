@@ -60,7 +60,7 @@ except Exception:  # pylint: disable=broad-except  # pragma: no cover
     # Django not installed or not setup so ignore.
     pass
 
-__title__ = 'diskcache'
+__title__ = 'cc12703-diskcache'
 __version__ = '5.7.2'
 __build__ = 0x050603
 __author__ = 'Grant Jenks'
