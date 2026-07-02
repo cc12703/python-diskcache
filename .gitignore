@@ -19,3 +19,6 @@
 
 # macOS metadata
 .DS_Store
+
+/.serena/
+/.vscode/
